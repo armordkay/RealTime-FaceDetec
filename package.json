@@ -1,0 +1,9 @@
+{
+  "name": "realtime-facedetec-main",
+  "private": true,
+  "scripts": {
+    "frontend:dev": "npm --prefix src/frontend run dev",
+    "frontend:build": "npm --prefix src/frontend run build",
+    "frontend:lint": "npm --prefix src/frontend run lint"
+  }
+}

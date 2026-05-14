@@ -4,3 +4,10 @@ sqlalchemy
 psycopg2-binary
 minio
 websockets
+PyJWT
+python-dotenv
+requests
+numpy
+Pillow
+deepface
+tf-keras
