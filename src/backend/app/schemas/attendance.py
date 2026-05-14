@@ -6,6 +6,15 @@ class AttendanceRecognizeRequest(BaseModel):
     cropped_image_base64: str = Field(min_length=10)
 
 
+class AttendanceConfirmRequest(BaseModel):
+    employee_id: int = Field(ge=1)
+    device_id: str = Field(min_length=2, max_length=120)
+    cropped_image_base64: str = Field(min_length=10)
+    score: float = 0.0
+    threshold: float = 0.0
+    is_live: bool = True
+
+
 class AttendanceLogItem(BaseModel):
     id: int
     employee_id: int

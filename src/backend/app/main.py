@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, Request
@@ -13,25 +12,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.db.init_db import init_db
+from app.schemas.common import build_error, build_success
 
 
 settings = get_settings()
-
-
-def success(data: Any) -> dict[str, Any]:
-    return {"success": True, "data": data}
-
-
-def error(code: str, message: str, details: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    return {
-        "success": False,
-        "error": {
-            "code": code,
-            "message": message,
-            "details": details or [],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        },
-    }
 
 
 def create_app() -> FastAPI:
@@ -78,7 +62,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-        payload = error(
+        payload = build_error(
             code=f"HTTP_{exc.status_code}",
             message=str(exc.detail),
             details=[{"request_id": getattr(request.state, "request_id", None)}],
@@ -87,7 +71,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
-        payload = error(
+        payload = build_error(
             code="VALIDATION_ERROR",
             message="Invalid request",
             details=exc.errors(),
@@ -96,7 +80,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
-        payload = error(
+        payload = build_error(
             code="INTERNAL_SERVER_ERROR",
             message="Unexpected server error",
             details=[{"request_id": getattr(request.state, "request_id", None)}],
@@ -107,7 +91,7 @@ def create_app() -> FastAPI:
 
     @base_router.get("/health", tags=["system"])
     async def health_check(request: Request):
-        return success(
+        return build_success(
             {
                 "service": settings.app_name,
                 "env": settings.app_env,

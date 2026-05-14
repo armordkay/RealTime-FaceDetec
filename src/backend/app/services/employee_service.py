@@ -5,6 +5,7 @@ from app.models.entities import Employee, utc_now
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.face_repository import FaceRepository
 from app.repositories.shift_repository import ShiftRepository
+from app.schemas.common import build_pagination
 
 
 class EmployeeService:
@@ -20,7 +21,6 @@ class EmployeeService:
         search: str | None,
         department: str | None,
         status_value: str | None,
-        current_user: dict,
     ) -> dict:
         records = self.employee_repository.list(
             search=search,
@@ -30,18 +30,15 @@ class EmployeeService:
         total = len(records)
         start = (page - 1) * page_size
         end = start + page_size
-        items = [self._to_item(record) for record in records[start:end]]
+        page_records = records[start:end]
+        sample_counts = self.face_repository.count_by_employee_ids([record.id for record in page_records])
+        items = [self._to_item(record, sample_counts.get(record.id, 0)) for record in page_records]
         return {
             "items": items,
-            "pagination": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": max((total + page_size - 1) // page_size, 1),
-            },
+            "pagination": build_pagination(page, page_size, total),
         }
 
-    def create(self, payload: dict, current_user: dict) -> dict:
+    def create(self, payload: dict) -> dict:
         if self.employee_repository.exists_by_code(payload["employee_code"]):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Employee code already exists")
 
@@ -64,13 +61,13 @@ class EmployeeService:
         self.employee_repository.create(employee)
         return self._to_item(employee)
 
-    def get_by_id(self, employee_id: int, current_user: dict) -> dict:
+    def get_by_id(self, employee_id: int) -> dict:
         employee = self.employee_repository.get(employee_id)
         if employee is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
         return self._to_item(employee)
 
-    def update(self, employee_id: int, payload: dict, current_user: dict) -> dict:
+    def update(self, employee_id: int, payload: dict) -> dict:
         employee = self.employee_repository.get(employee_id)
         if employee is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
@@ -119,7 +116,7 @@ class EmployeeService:
         self.employee_repository.update(employee)
         return self._to_item(employee)
 
-    def _to_item(self, employee: Employee) -> dict:
+    def _to_item(self, employee: Employee, enrolled_samples: int | None = None) -> dict:
         return {
             "id": employee.id,
             "employee_code": employee.employee_code,
@@ -130,7 +127,9 @@ class EmployeeService:
             "position": employee.position,
             "status": employee.status,
             "default_shift_id": employee.default_shift_id,
-            "enrolled_samples": self.face_repository.count_by_employee(employee.id),
+            "enrolled_samples": enrolled_samples
+            if enrolled_samples is not None
+            else self.face_repository.count_by_employee(employee.id),
             "created_at": to_vietnam_iso(employee.created_at),
             "updated_at": to_vietnam_iso(employee.updated_at),
         }

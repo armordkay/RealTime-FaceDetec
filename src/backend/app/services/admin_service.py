@@ -46,10 +46,15 @@ class AdminService:
         limit = max(1, min(limit, 200))
         logs = self.attendance_repository.list(action_type=None)
         access_logs = [item for item in logs if item.action_type in {"check_in", "check_out"}]
+        employee_ids = [log.employee_id for log in access_logs[:limit]]
+        employees_by_id = {
+            employee.id: employee
+            for employee in self.employee_repository.list_by_ids(employee_ids)
+        }
 
         items = []
         for log in access_logs[:limit]:
-            employee = self.employee_repository.get(log.employee_id)
+            employee = employees_by_id.get(log.employee_id)
             items.append(
                 {
                     "id": log.id,
@@ -124,10 +129,6 @@ class AdminService:
                 "recognition_threshold",
                 self.settings.recognition_threshold,
             ),
-            "attendance_cooldown_seconds": self.config_repository.get_int(
-                "attendance_cooldown_seconds",
-                self.settings.attendance_cooldown_seconds,
-            ),
             "kiosk_allowed_devices": self.config_repository.get_value(
                 "kiosk_allowed_devices",
                 "kiosk_front_gate_1",
@@ -139,11 +140,6 @@ class AdminService:
             "recognition_threshold",
             str(payload["recognition_threshold"]),
             "Minimum score required to accept a face match",
-        )
-        self.config_repository.upsert(
-            "attendance_cooldown_seconds",
-            str(payload["attendance_cooldown_seconds"]),
-            "Seconds to block duplicate check-in/out events",
         )
         self.config_repository.upsert(
             "kiosk_allowed_devices",

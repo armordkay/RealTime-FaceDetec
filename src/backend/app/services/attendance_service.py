@@ -1,6 +1,5 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
-from app.core.config import get_settings
 from app.core.timezone import VIETNAM_TZ, as_utc, as_vietnam_time, to_vietnam_iso, vietnam_today
 from app.models.entities import AttendanceLog, utc_now
 from app.repositories.attendance_repository import AttendanceRepository
@@ -12,7 +11,6 @@ from app.services.storage_service import ImageStorageService
 
 class AttendanceService:
     def __init__(self) -> None:
-        self.settings = get_settings()
         self.attendance_repository = AttendanceRepository()
         self.employee_repository = EmployeeRepository()
         self.config_repository = SystemConfigRepository()
@@ -20,6 +18,20 @@ class AttendanceService:
         self.storage_service = ImageStorageService()
 
     def recognize_and_attend(self, device_id: str, cropped_image_base64: str) -> dict:
+        preview = self.recognize_for_attendance(device_id, cropped_image_base64)
+        if preview.get("attendance_status") != "pending_confirmation":
+            return preview
+
+        return self.confirm_attendance(
+            employee_id=preview["employee_id"],
+            device_id=device_id,
+            cropped_image_base64=cropped_image_base64,
+            score=preview["score"],
+            threshold=preview["threshold"],
+            is_live=preview["is_live"],
+        )
+
+    def recognize_for_attendance(self, device_id: str, cropped_image_base64: str) -> dict:
         if not self._is_device_allowed(device_id):
             return {
                 "match_found": False,
@@ -34,7 +46,7 @@ class AttendanceService:
                 "snapshot_url": None,
             }
 
-        recognized = self.recognition_service.recognize(device_id=device_id, cropped_image_base64=cropped_image_base64)
+        recognized = self.recognition_service.recognize(cropped_image_base64=cropped_image_base64)
         if not recognized["match_found"]:
             return {
                 **recognized,
@@ -54,20 +66,54 @@ class AttendanceService:
                 "snapshot_url": None,
             }
 
+        action = self._suggest_action(employee_id)
+        return {
+            **recognized,
+            "action_suggested": action,
+            "attendance_status": "pending_confirmation",
+            "message": "Ready to record",
+            "snapshot_url": None,
+        }
+
+    def confirm_attendance(
+        self,
+        employee_id: int,
+        device_id: str,
+        cropped_image_base64: str,
+        score: float,
+        threshold: float,
+        is_live: bool,
+    ) -> dict:
+        if not self._is_device_allowed(device_id):
+            return {
+                "match_found": False,
+                "employee_id": employee_id,
+                "employee_name": None,
+                "score": score,
+                "threshold": threshold,
+                "is_live": is_live,
+                "action_suggested": "ignored",
+                "attendance_status": "rejected",
+                "message": "Device is not allowed",
+                "snapshot_url": None,
+            }
+
+        employee = self.employee_repository.get(employee_id)
+        if employee is None:
+            return {
+                "match_found": False,
+                "employee_id": employee_id,
+                "employee_name": None,
+                "score": score,
+                "threshold": threshold,
+                "is_live": is_live,
+                "action_suggested": "ignored",
+                "attendance_status": "rejected",
+                "message": "Employee not found",
+                "snapshot_url": None,
+            }
+
         now = utc_now()
-        last_log = self.attendance_repository.get_last_for_employee(employee_id)
-
-        if last_log is not None:
-            cooldown = timedelta(seconds=self._cooldown_seconds())
-            if now - as_utc(last_log.event_time) < cooldown:
-                return {
-                    **recognized,
-                    "action_suggested": "ignored",
-                    "attendance_status": "duplicate_blocked",
-                    "message": "Cooldown active",
-                    "snapshot_url": None,
-                }
-
         action = self._suggest_action(employee_id)
         try:
             snapshot_url = self.storage_service.save_base64_image(
@@ -77,7 +123,12 @@ class AttendanceService:
             )
         except ValueError:
             return {
-                **recognized,
+                "match_found": True,
+                "employee_id": employee_id,
+                "employee_name": employee.full_name,
+                "score": score,
+                "threshold": threshold,
+                "is_live": is_live,
                 "action_suggested": "ignored",
                 "attendance_status": "rejected",
                 "message": "Invalid image payload",
@@ -89,9 +140,9 @@ class AttendanceService:
             device_id=device_id,
             action_type=action,
             event_time=now,
-            score=recognized["score"],
-            threshold=recognized["threshold"],
-            is_live=recognized["is_live"],
+            score=score,
+            threshold=threshold,
+            is_live=is_live,
             snapshot_url=snapshot_url,
             status="recorded",
             reason=None,
@@ -101,7 +152,12 @@ class AttendanceService:
 
         message = "Check-in thanh cong" if action == "check_in" else "Check-out thanh cong"
         return {
-            **recognized,
+            "match_found": True,
+            "employee_id": employee_id,
+            "employee_name": employee.full_name,
+            "score": score,
+            "threshold": threshold,
+            "is_live": is_live,
             "action_suggested": action,
             "attendance_status": "recorded",
             "message": message,
@@ -116,7 +172,7 @@ class AttendanceService:
         status: str | None,
         action_type: str | None,
         device_id: str | None,
-        current_user: dict | None = None,
+        limit: int | None = None,
     ) -> list[dict]:
         from_dt = self._parse_date(date_from, start=True)
         to_dt = self._parse_date(date_to, start=False)
@@ -127,30 +183,14 @@ class AttendanceService:
             date_from=from_dt,
             date_to=to_dt,
             device_id=device_id,
+            limit=limit,
         )
 
-        items: list[dict] = []
-        for log in logs:
-            employee = self.employee_repository.get(log.employee_id)
-            items.append(
-                {
-                    "id": log.id,
-                    "employee_id": log.employee_id,
-                    "employee_name": employee.full_name if employee else "Unknown",
-                    "device_id": log.device_id,
-                    "action_type": log.action_type,
-                    "event_time": to_vietnam_iso(log.event_time),
-                    "event_time_vn": to_vietnam_iso(log.event_time),
-                    "score": log.score,
-                    "threshold": log.threshold,
-                    "is_live": log.is_live,
-                    "snapshot_url": log.snapshot_url,
-                    "status": log.status,
-                    "reason": log.reason,
-                    "created_at": to_vietnam_iso(log.created_at),
-                }
-            )
-        return items
+        employees_by_id = {
+            employee.id: employee
+            for employee in self.employee_repository.list_by_ids([log.employee_id for log in logs])
+        }
+        return [self._to_log_item(log, employees_by_id.get(log.employee_id)) for log in logs]
 
     def my_logs(self, employee_id: int) -> list[dict]:
         return self.list_logs(
@@ -160,13 +200,17 @@ class AttendanceService:
             status=None,
             action_type=None,
             device_id=None,
-            current_user=None,
         )
 
     def my_status(self, employee_id: int) -> dict:
-        logs = self.attendance_repository.list(employee_id=employee_id)
         today = vietnam_today()
-        today_logs = [item for item in logs if as_vietnam_time(item.event_time).date() == today and item.status == "recorded"]
+        start_of_day, end_of_day = self._today_bounds()
+        today_logs = self.attendance_repository.list(
+            employee_id=employee_id,
+            status="recorded",
+            date_from=start_of_day,
+            date_to=end_of_day,
+        )
         check_in_count = len([item for item in today_logs if item.action_type == "check_in"])
         check_out_count = len([item for item in today_logs if item.action_type == "check_out"])
         last_log = today_logs[0] if today_logs else None
@@ -184,7 +228,7 @@ class AttendanceService:
             "next_expected_action": self._suggest_action(employee_id),
         }
 
-    def update_log(self, log_id: int, payload: dict, current_user: dict) -> dict:
+    def update_log(self, log_id: int, payload: dict) -> dict:
         log = self.attendance_repository.get(log_id)
         if log is None:
             return {
@@ -202,36 +246,48 @@ class AttendanceService:
         return {
             "updated": True,
             "message": "Attendance log updated",
-            "log": {
-                "id": log.id,
-                "employee_id": log.employee_id,
-                "employee_name": employee.full_name if employee else "Unknown",
-                "device_id": log.device_id,
-                "action_type": log.action_type,
-                "event_time": to_vietnam_iso(log.event_time),
-                "event_time_vn": to_vietnam_iso(log.event_time),
-                "score": log.score,
-                "threshold": log.threshold,
-                "is_live": log.is_live,
-                "snapshot_url": log.snapshot_url,
-                "status": log.status,
-                "reason": log.reason,
-                "created_at": to_vietnam_iso(log.created_at),
-            },
+            "log": self._to_log_item(log, employee),
         }
 
     def _suggest_action(self, employee_id: int) -> str:
-        logs = self.attendance_repository.list(employee_id=employee_id)
+        start_of_day, end_of_day = self._today_bounds()
+        logs = self.attendance_repository.list(
+            employee_id=employee_id,
+            status="recorded",
+            date_from=start_of_day,
+            date_to=end_of_day,
+            limit=1,
+        )
         if not logs:
             return "check_in"
 
-        today = vietnam_today()
-        today_logs = [item for item in logs if as_vietnam_time(item.event_time).date() == today and item.status == "recorded"]
-        if not today_logs:
-            return "check_in"
-
-        last = today_logs[0]
+        last = logs[0]
         return "check_out" if last.action_type == "check_in" else "check_in"
+
+    def _today_bounds(self) -> tuple[datetime, datetime]:
+        today = vietnam_today()
+        return (
+            as_utc(datetime.combine(today, datetime.min.time(), tzinfo=VIETNAM_TZ)),
+            as_utc(datetime.combine(today, datetime.max.time(), tzinfo=VIETNAM_TZ)),
+        )
+
+    def _to_log_item(self, log: AttendanceLog, employee) -> dict:
+        return {
+            "id": log.id,
+            "employee_id": log.employee_id,
+            "employee_name": employee.full_name if employee else "Unknown",
+            "device_id": log.device_id,
+            "action_type": log.action_type,
+            "event_time": to_vietnam_iso(log.event_time),
+            "event_time_vn": to_vietnam_iso(log.event_time),
+            "score": log.score,
+            "threshold": log.threshold,
+            "is_live": log.is_live,
+            "snapshot_url": log.snapshot_url,
+            "status": log.status,
+            "reason": log.reason,
+            "created_at": to_vietnam_iso(log.created_at),
+        }
 
     def _parse_date(self, value: str | None, start: bool) -> datetime | None:
         if value is None:
@@ -248,12 +304,6 @@ class AttendanceService:
         if start:
             return parsed
         return parsed + timedelta(hours=23, minutes=59, seconds=59)
-
-    def _cooldown_seconds(self) -> int:
-        return self.config_repository.get_int(
-            "attendance_cooldown_seconds",
-            self.settings.attendance_cooldown_seconds,
-        )
 
     def _is_device_allowed(self, device_id: str) -> bool:
         raw = self.config_repository.get_value("kiosk_allowed_devices", "")

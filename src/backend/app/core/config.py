@@ -2,6 +2,11 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
 
 def _parse_bool(value: str | None, default: bool) -> bool:
     if value is None:
@@ -44,13 +49,17 @@ class Settings:
     cors_origins: list[str]
 
     database_url: str
+    data_backend: str
+
+    supabase_url: str | None
+    supabase_key: str | None
 
     jwt_secret_key: str
     jwt_algorithm: str
     access_token_expire_minutes: int
 
     recognition_threshold: float
-    attendance_cooldown_seconds: int
+    kiosk_api_key: str | None
 
     media_dir: str
     public_media_url: str
@@ -76,15 +85,16 @@ def get_settings() -> Settings:
             ["http://localhost:5173", "http://127.0.0.1:5173"],
         ),
         database_url=os.getenv("DATABASE_URL", "sqlite:///./face_attendance.db"),
+        data_backend=os.getenv("DATA_BACKEND", "sqlite").strip().lower(),
+        supabase_url=os.getenv("SUPABASE_URL"),
+        supabase_key=os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_PUBLISHABLE_KEY"),
         jwt_secret_key=os.getenv("JWT_SECRET_KEY", "change-me-in-production"),
         jwt_algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
         access_token_expire_minutes=_parse_int(
             os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"), 60
         ),
         recognition_threshold=_parse_float(os.getenv("RECOGNITION_THRESHOLD"), 0.65),
-        attendance_cooldown_seconds=_parse_int(
-            os.getenv("ATTENDANCE_COOLDOWN_SECONDS"), 60
-        ),
+        kiosk_api_key=os.getenv("KIOSK_API_KEY"),
         media_dir=os.getenv("MEDIA_DIR", "media"),
         public_media_url=os.getenv("PUBLIC_MEDIA_URL", "/media"),
         minio_endpoint=os.getenv("MINIO_ENDPOINT"),

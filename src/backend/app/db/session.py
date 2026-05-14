@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
 
@@ -20,11 +21,14 @@ def _build_engine(database_url: str) -> Engine:
             future=True,
         )
 
-    return create_engine(
-        database_url,
-        pool_pre_ping=True,
-        future=True,
-    )
+    engine_kwargs = {
+        "pool_pre_ping": True,
+        "future": True,
+    }
+    if settings.data_backend == "postgres" and "pooler.supabase.com" in database_url:
+        engine_kwargs["poolclass"] = NullPool
+
+    return create_engine(database_url, **engine_kwargs)
 
 
 engine = _build_engine(settings.database_url)

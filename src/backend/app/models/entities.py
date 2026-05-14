@@ -69,6 +69,9 @@ class FaceSample(Base):
     quality_score: Mapped[float] = mapped_column(Float, nullable=False)
     model_name: Mapped[str] = mapped_column(String(120), nullable=False)
     embedding_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    # Vector embedding lưu dạng JSON string, ví dụ: "[0.12, -0.34, ...]"
+    # DeepFace Facenet512 → 512 chiều; ArcFace → 512 chiều
+    embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 

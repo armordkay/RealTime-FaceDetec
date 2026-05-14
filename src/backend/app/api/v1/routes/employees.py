@@ -18,7 +18,7 @@ def list_employees(
     search: str | None = None,
     department: str | None = None,
     status: str | None = None,
-    current_user: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER)),
+    _: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER)),
 ):
     data = service.list(
         page=page,
@@ -26,7 +26,6 @@ def list_employees(
         search=search,
         department=department,
         status_value=status,
-        current_user=current_user,
     )
     return build_success(data)
 
@@ -34,9 +33,9 @@ def list_employees(
 @router.post("")
 def create_employee(
     payload: EmployeeCreateRequest,
-    current_user: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER)),
+    _: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER)),
 ):
-    data = service.create(payload.model_dump(), current_user=current_user)
+    data = service.create(payload.model_dump())
     return build_success(data)
 
 
@@ -56,8 +55,8 @@ def update_my_profile(
 
 
 @router.get("/{employee_id}")
-def get_employee(employee_id: int, current_user: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER))):
-    data = service.get_by_id(employee_id, current_user)
+def get_employee(employee_id: int, _: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER))):
+    data = service.get_by_id(employee_id)
     return build_success(data)
 
 
@@ -65,9 +64,9 @@ def get_employee(employee_id: int, current_user: dict = Depends(require_roles(RO
 def update_employee(
     employee_id: int,
     payload: EmployeeUpdateRequest,
-    current_user: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER)),
+    _: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER)),
 ):
-    data = service.update(employee_id, payload.model_dump(exclude_unset=True), current_user=current_user)
+    data = service.update(employee_id, payload.model_dump(exclude_unset=True))
     return build_success(data)
 
 

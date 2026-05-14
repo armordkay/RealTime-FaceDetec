@@ -17,5 +17,4 @@ class AdminUserUpdateRequest(BaseModel):
 
 class SystemConfigUpdateRequest(BaseModel):
     recognition_threshold: float = Field(ge=0.0, le=1.0)
-    attendance_cooldown_seconds: int = Field(ge=0, le=3600)
     kiosk_allowed_devices: str = Field(default="", max_length=1000)
