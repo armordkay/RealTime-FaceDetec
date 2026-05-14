@@ -18,7 +18,6 @@ export default function AdminPage() {
   const [users, setUsers] = useState([])
   const [config, setConfig] = useState({
     recognition_threshold: 0.65,
-    attendance_cooldown_seconds: 60,
     kiosk_allowed_devices: '',
   })
   const [userForm, setUserForm] = useState(initialUserForm)
@@ -108,7 +107,6 @@ export default function AdminPage() {
     try {
       const response = await adminApi.updateConfig({
         recognition_threshold: Number(config.recognition_threshold),
-        attendance_cooldown_seconds: Number(config.attendance_cooldown_seconds),
         kiosk_allowed_devices: config.kiosk_allowed_devices || '',
       })
       setConfig(response.data)
@@ -205,16 +203,6 @@ export default function AdminPage() {
               step="0.01"
               value={config.recognition_threshold}
               onChange={(event) => updateConfigField('recognition_threshold', event.target.value)}
-            />
-          </label>
-          <label>
-            Attendance Cooldown Seconds
-            <input
-              type="number"
-              min="0"
-              max="3600"
-              value={config.attendance_cooldown_seconds}
-              onChange={(event) => updateConfigField('attendance_cooldown_seconds', event.target.value)}
             />
           </label>
           <label>

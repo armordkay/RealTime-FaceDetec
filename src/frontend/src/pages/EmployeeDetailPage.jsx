@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { API_BASE_URL } from '../api/client'
 import { employeeApi } from '../api/employeeApi'
 import { faceEnrollmentApi } from '../api/faceEnrollmentApi'
+import { useCameraCapture } from '../hooks/useCameraCapture'
 import { navigate } from '../routes/router'
 import { formatDateTime } from '../utils/time'
 
@@ -15,13 +16,9 @@ function resolveMediaUrl(url) {
 }
 
 export default function EmployeeDetailPage({ employeeId }) {
-  const videoRef = useRef(null)
-  const canvasRef = useRef(null)
-
   const [employee, setEmployee] = useState(null)
   const [samples, setSamples] = useState([])
   const [capturedFrames, setCapturedFrames] = useState([])
-  const [cameraOn, setCameraOn] = useState(false)
   const [saving, setSaving] = useState(false)
   const [enrolling, setEnrolling] = useState(false)
   const [error, setError] = useState('')
@@ -35,6 +32,14 @@ export default function EmployeeDetailPage({ employeeId }) {
     department: '',
     status: '',
   })
+  const {
+    videoRef,
+    canvasRef,
+    cameraOn,
+    startCamera,
+    stopCamera,
+    captureFrameBase64,
+  } = useCameraCapture({ onError: setError })
 
   async function loadDetail() {
     if (!employeeId) return
@@ -64,6 +69,8 @@ export default function EmployeeDetailPage({ employeeId }) {
     return () => {
       stopCamera()
     }
+    // This effect owns the employee-detail lifecycle; camera cleanup must only run on page exit/id change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employeeId])
 
   function handleChange(field, value) {
@@ -87,44 +94,12 @@ export default function EmployeeDetailPage({ employeeId }) {
     }
   }
 
-  async function startCamera() {
-    setError('')
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        await videoRef.current.play()
-      }
-      setCameraOn(true)
-    } catch (err) {
-      setError(err.message || 'Cannot access camera')
-    }
-  }
-
-  function stopCamera() {
-    const stream = videoRef.current?.srcObject
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop())
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null
-    }
-    setCameraOn(false)
-  }
-
   function captureFaceSample() {
-    const video = videoRef.current
-    const canvas = canvasRef.current
-    if (!video || !canvas || !video.videoWidth || !video.videoHeight) {
+    const frame = captureFrameBase64()
+    if (!frame) {
       setError('Camera is not ready')
       return
     }
-
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    const ctx = canvas.getContext('2d')
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-    const frame = canvas.toDataURL('image/jpeg', 0.8)
 
     setCapturedFrames((prev) => [...prev, frame])
     setMessage(`Captured ${capturedFrames.length + 1} sample(s)`)
@@ -132,6 +107,33 @@ export default function EmployeeDetailPage({ employeeId }) {
 
   function removeCaptured(index) {
     setCapturedFrames((prev) => prev.filter((_, idx) => idx !== index))
+  }
+
+  async function handleFileSamples(event) {
+    const files = Array.from(event.target.files || [])
+    if (files.length === 0) return
+
+    setError('')
+    setMessage('')
+
+    try {
+      const frames = await Promise.all(
+        files.map((file) => (
+          new Promise((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result)
+            reader.onerror = () => reject(new Error(`Cannot read ${file.name}`))
+            reader.readAsDataURL(file)
+          })
+        )),
+      )
+      setCapturedFrames((prev) => [...prev, ...frames])
+      setMessage(`Added ${frames.length} image sample(s)`)
+    } catch (err) {
+      setError(err.message || 'Cannot add image samples')
+    } finally {
+      event.target.value = ''
+    }
   }
 
   async function submitEnrollment() {
@@ -143,13 +145,22 @@ export default function EmployeeDetailPage({ employeeId }) {
 
     setEnrolling(true)
     setError('')
-    setMessage('')
+    setMessage('Processing face samples. The first enrollment can take a few minutes while the recognition model loads.')
     try {
       const response = await faceEnrollmentApi.enroll({
         employee_id: employee.id,
         samples: capturedFrames.map((frame) => ({ image_base64: frame })),
       })
-      setMessage(`Enrollment done. Saved ${response.data.saved_samples} sample(s)`)
+      const failureText = response.data.failure_reasons?.length
+        ? ` Failed: ${response.data.failure_reasons.join('; ')}`
+        : ''
+
+      if (response.data.saved_samples === 0) {
+        setError(`${response.data.message}.${failureText}`)
+        return
+      }
+
+      setMessage(`Enrollment done. Saved ${response.data.saved_samples} sample(s).${failureText}`)
       setCapturedFrames([])
       await loadDetail()
     } catch (err) {
@@ -274,8 +285,13 @@ export default function EmployeeDetailPage({ employeeId }) {
                 Capture Sample
               </button>
 
+              <label className="btn secondary">
+                Add Images
+                <input className="hidden" type="file" accept="image/*" multiple onChange={handleFileSamples} />
+              </label>
+
               <button className="btn" type="button" onClick={submitEnrollment} disabled={enrolling || capturedFrames.length === 0}>
-                {enrolling ? 'Saving...' : 'Submit Enrollment'}
+                {enrolling ? 'Processing...' : 'Submit Enrollment'}
               </button>
             </div>
 

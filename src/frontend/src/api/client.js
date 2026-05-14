@@ -3,6 +3,17 @@ import { getAccessToken } from '../store/authStore'
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api/v1'
 
+export function toQuery(params) {
+  const query = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== '') {
+      query.set(key, String(value))
+    }
+  })
+  const serialized = query.toString()
+  return serialized ? `?${serialized}` : ''
+}
+
 async function parseResponse(response) {
   const contentType = response.headers.get('content-type') || ''
 

@@ -30,6 +30,7 @@ class AuthService:
             payload={"sub": str(user.id), "role": user.role},
             secret_key=self.settings.jwt_secret_key,
             expires_minutes=self.settings.access_token_expire_minutes,
+            algorithm=self.settings.jwt_algorithm,
         )
 
         return {

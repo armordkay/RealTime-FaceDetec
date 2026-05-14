@@ -27,8 +27,12 @@ class ReportService:
                 grouped[item.employee_id].append(item)
 
         items = []
+        employees_by_id = {
+            employee.id: employee
+            for employee in self.employee_repository.list_by_ids(list(grouped.keys()))
+        }
         for employee_id, values in grouped.items():
-            employee = self.employee_repository.get(employee_id)
+            employee = employees_by_id.get(employee_id)
             check_in_count = len([v for v in values if v.action_type == "check_in" and v.status == "recorded"])
             check_out_count = len([v for v in values if v.action_type == "check_out" and v.status == "recorded"])
             last_status = values[-1].status if values else "unknown"
@@ -84,8 +88,12 @@ class ReportService:
     def export_csv(self) -> str:
         rows = ["employee_id,employee_name,action_type,event_time,status"]
         logs = self.attendance_repository.list()
+        employees_by_id = {
+            employee.id: employee
+            for employee in self.employee_repository.list_by_ids([log.employee_id for log in logs])
+        }
         for log in logs:
-            employee = self.employee_repository.get(log.employee_id)
+            employee = employees_by_id.get(log.employee_id)
             rows.append(
                 f"{log.employee_id},{employee.full_name if employee else 'Unknown'},{log.action_type},{to_vietnam_iso(log.event_time)},{log.status}"
             )
