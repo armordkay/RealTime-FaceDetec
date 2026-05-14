@@ -1,15 +1,4 @@
-import { apiRequest } from './client'
-
-function toQuery(params) {
-  const query = new URLSearchParams()
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== null && value !== undefined && value !== '') {
-      query.set(key, String(value))
-    }
-  })
-  const serialized = query.toString()
-  return serialized ? `?${serialized}` : ''
-}
+import { apiRequest, toQuery } from './client'
 
 export const employeeApi = {
   list: (params = {}) => apiRequest(`/employees${toQuery(params)}`),

@@ -3,10 +3,13 @@ import { useEffect, useRef, useState } from 'react'
 import { API_BASE_URL } from '../api/client'
 import { attendanceApi } from '../api/attendanceApi'
 import StatusBadge from '../components/common/StatusBadge'
+import { useCameraCapture } from '../hooks/useCameraCapture'
 import { formatDateTime } from '../utils/time'
 
 const DEVICE_ID = 'kiosk_front_gate_1'
-const STREAM_INTERVAL_MS = 200
+const STREAM_INTERVAL_MS = 900
+const FRAME_MAX_WIDTH = 640
+const KIOSK_API_KEY = import.meta.env.VITE_KIOSK_API_KEY || ''
 
 function getKioskWebSocketUrl() {
   const explicitUrl = import.meta.env.VITE_KIOSK_WS_URL
@@ -16,50 +19,63 @@ function getKioskWebSocketUrl() {
   apiUrl.protocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:'
   apiUrl.pathname = `${apiUrl.pathname.replace(/\/$/, '')}/attendance/kiosk-ws`
   apiUrl.search = ''
+  if (KIOSK_API_KEY) {
+    apiUrl.searchParams.set('kiosk_key', KIOSK_API_KEY)
+  }
   return apiUrl.toString()
 }
 
 export default function KioskCheckinPage() {
-  const videoRef = useRef(null)
-  const canvasRef = useRef(null)
   const runningRef = useRef(false)
   const socketRef = useRef(null)
   const streamIntervalRef = useRef(null)
+  const frameInFlightRef = useRef(false)
+  const lastSentFrameRef = useRef('')
+  const currentPersonFrameRef = useRef('')
+  const lastResultFrameRef = useRef('')
+  const lastResultRef = useRef(null)
 
-  const [cameraOn, setCameraOn] = useState(false)
   const [error, setError] = useState('')
+  const [currentPerson, setCurrentPerson] = useState(null)
   const [lastResult, setLastResult] = useState(null)
+  const [lastResultHasFrame, setLastResultHasFrame] = useState(false)
   const [logs, setLogs] = useState([])
   const [requesting, setRequesting] = useState(false)
+  const [recordingAttendance, setRecordingAttendance] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState('disconnected')
+  const {
+    videoRef,
+    canvasRef,
+    cameraOn,
+    startCamera: startCameraCapture,
+    stopCamera: stopCameraCapture,
+    captureFrameBase64,
+  } = useCameraCapture({
+    maxWidth: FRAME_MAX_WIDTH,
+    quality: 0.55,
+    onError: setError,
+  })
+
+  function updateLastResult(nextResult, frame) {
+    lastResultRef.current = nextResult
+    lastResultFrameRef.current = frame || ''
+    setLastResultHasFrame(Boolean(frame))
+    setLastResult(nextResult)
+  }
 
   async function startCamera() {
     setError('')
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        await videoRef.current.play()
-      }
+    const started = await startCameraCapture()
+    if (started) {
       runningRef.current = true
-      setCameraOn(true)
       connectWebSocket()
-    } catch (err) {
-      setError(err.message || 'Cannot access camera')
     }
   }
 
   function stopCamera() {
     runningRef.current = false
     stopStreaming()
-    const stream = videoRef.current?.srcObject
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop())
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null
-    }
-    setCameraOn(false)
+    stopCameraCapture()
   }
 
   function connectWebSocket() {
@@ -76,6 +92,7 @@ export default function KioskCheckinPage() {
     }
 
     socket.onmessage = (event) => {
+      frameInFlightRef.current = false
       try {
         const payload = JSON.parse(event.data)
         if (payload.success === false) {
@@ -83,18 +100,28 @@ export default function KioskCheckinPage() {
           return
         }
 
-        setLastResult(payload.data)
+        setCurrentPerson(payload.data)
+        currentPersonFrameRef.current = lastSentFrameRef.current
+        if (
+          payload.data.match_found
+          && payload.data.attendance_status !== 'rejected'
+          && !lastResultRef.current
+        ) {
+          updateLastResult(payload.data, currentPersonFrameRef.current)
+        }
       } catch {
         setError('Invalid recognition response')
       }
     }
 
     socket.onerror = () => {
+      frameInFlightRef.current = false
       setError('Kiosk WebSocket connection failed')
       setConnectionStatus('error')
     }
 
     socket.onclose = () => {
+      frameInFlightRef.current = false
       setRequesting(false)
       setConnectionStatus('disconnected')
       stopStreaming(false)
@@ -114,6 +141,7 @@ export default function KioskCheckinPage() {
       clearInterval(streamIntervalRef.current)
       streamIntervalRef.current = null
     }
+    frameInFlightRef.current = false
 
     if (closeSocket && socketRef.current) {
       socketRef.current.close()
@@ -122,26 +150,16 @@ export default function KioskCheckinPage() {
     setRequesting(false)
   }
 
-  function captureFrameBase64() {
-    const video = videoRef.current
-    const canvas = canvasRef.current
-    if (!video || !canvas) return null
-    if (!video.videoWidth || !video.videoHeight) return null
-
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    const ctx = canvas.getContext('2d')
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-    return canvas.toDataURL('image/jpeg', 0.72)
-  }
-
   function sendCheckinFrame() {
     if (!runningRef.current) return
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return
+    if (frameInFlightRef.current) return
 
     const frame = captureFrameBase64()
     if (!frame) return
 
+    frameInFlightRef.current = true
+    lastSentFrameRef.current = frame
     socketRef.current.send(JSON.stringify({
       device_id: DEVICE_ID,
       cropped_image_base64: frame,
@@ -157,6 +175,37 @@ export default function KioskCheckinPage() {
     }
   }
 
+  function reloadLastResult() {
+    if (!currentPerson?.match_found || currentPerson.attendance_status === 'rejected') {
+      updateLastResult(null, '')
+      return
+    }
+    updateLastResult(currentPerson, currentPersonFrameRef.current)
+  }
+
+  async function recordAttendance() {
+    if (!lastResult?.employee_id || !lastResultFrameRef.current) return
+
+    setRecordingAttendance(true)
+    setError('')
+    try {
+      const response = await attendanceApi.confirmKioskAttendance({
+        employee_id: lastResult.employee_id,
+        device_id: DEVICE_ID,
+        cropped_image_base64: lastResultFrameRef.current,
+        score: lastResult.score,
+        threshold: lastResult.threshold,
+        is_live: lastResult.is_live,
+      })
+      updateLastResult(response.data, lastResultFrameRef.current)
+      await loadLogs(12)
+    } catch (err) {
+      setError(err.message || 'Cannot record attendance')
+    } finally {
+      setRecordingAttendance(false)
+    }
+  }
+
   useEffect(() => {
     startCamera()
     loadLogs(12)
@@ -169,6 +218,8 @@ export default function KioskCheckinPage() {
       clearInterval(logsInterval)
       stopCamera()
     }
+    // Kiosk bootstraps camera and polling once for the page lifecycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return (
@@ -198,39 +249,106 @@ export default function KioskCheckinPage() {
 
       <div className="kiosk-grid">
         <div className="card kiosk-video-card">
-          <video ref={videoRef} className="kiosk-video" muted playsInline />
+          <div className="kiosk-video-frame">
+            <video ref={videoRef} className="kiosk-video" muted playsInline />
+          </div>
           <canvas ref={canvasRef} className="hidden" />
           <p>{requesting ? `Streaming (${connectionStatus})` : connectionStatus}</p>
         </div>
 
         <div className="card">
-          <h3>Last Result</h3>
-          {lastResult ? (
-            <div className="detail-grid">
-              <div>
-                <strong>Employee:</strong> {lastResult.employee_name || 'Unknown'}
-              </div>
-              <div>
-                <strong>Match:</strong> {lastResult.match_found ? 'Yes' : 'No'}
-              </div>
-              <div>
-                <strong>Action:</strong> <StatusBadge value={lastResult.action_suggested} />
-              </div>
-              <div>
-                <strong>Status:</strong> <StatusBadge value={lastResult.attendance_status} />
-              </div>
-              <div>
-                <strong>Score:</strong> {lastResult.score}
-              </div>
-              <div>
-                <strong>Message:</strong> {lastResult.message}
-              </div>
+          <h3>Current Person</h3>
+          <div className="detail-grid">
+            <div>
+              <strong>Employee:</strong> {currentPerson?.employee_name || 'Unknown'}
             </div>
-          ) : (
-            <p>No result yet.</p>
-          )}
+            <div>
+              <strong>Match:</strong> {currentPerson?.match_found ? 'Yes' : 'No'}
+            </div>
+            <div>
+              <strong>Score:</strong> {currentPerson?.score ?? 0}
+            </div>
+            <div>
+              <strong>Message:</strong> {currentPerson?.message || 'No face recognized'}
+            </div>
+          </div>
         </div>
       </div>
+
+      <div className="card">
+        <h3>Last Result</h3>
+        {lastResult ? (
+          <div className="detail-grid">
+            <div>
+              <strong>Employee:</strong> {lastResult.employee_name || 'Unknown'}
+            </div>
+            <div>
+              <strong>Match:</strong> {lastResult.match_found ? 'Yes' : 'No'}
+            </div>
+            <div>
+              <strong>Action:</strong> <StatusBadge value={lastResult.action_suggested} />
+            </div>
+            <div>
+              <strong>Status:</strong> <StatusBadge value={lastResult.attendance_status} />
+            </div>
+            <div>
+              <strong>Score:</strong> {lastResult.score}
+            </div>
+            <div>
+              <strong>Message:</strong> {lastResult.message}
+            </div>
+            <div className="inline-form">
+              <button
+                className="btn"
+                type="button"
+                onClick={recordAttendance}
+                disabled={recordingAttendance || !lastResult?.employee_id || !lastResultHasFrame}
+              >
+                {recordingAttendance ? 'Recording...' : 'Submit'}
+              </button>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={reloadLastResult}
+              >
+                Reload
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="detail-grid">
+            <div>
+              <strong>Employee:</strong> Unknown
+            </div>
+            <div>
+              <strong>Match:</strong> No
+            </div>
+            <div>
+              <strong>Score:</strong> 0
+            </div>
+            <div>
+              <strong>Message:</strong> No result yet
+            </div>
+            <div className="inline-form">
+              <button
+                className="btn"
+                type="button"
+                onClick={recordAttendance}
+                disabled
+              >
+                Ghi nhận
+              </button>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={reloadLastResult}
+              >
+                Reload
+              </button>
+            </div>
+          </div>
+        )}
+        </div>
 
       <div className="card">
         <h3>Recent Check-In Logs</h3>
