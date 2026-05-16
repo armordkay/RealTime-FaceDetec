@@ -4,9 +4,9 @@ export default function StatusBadge({ value }) {
 
   if (['recorded', 'check_in', 'check_out', 'active', 'match_found'].includes(normalized)) {
     className = 'badge success'
-  } else if (['duplicate_blocked', 'review_required'].includes(normalized)) {
+  } else if (['duplicate_blocked', 'review_required', 'suspicious', 'warning', 'open'].includes(normalized)) {
     className = 'badge warning'
-  } else if (['rejected', 'inactive', 'ignored'].includes(normalized)) {
+  } else if (['rejected', 'inactive', 'ignored', 'critical'].includes(normalized)) {
     className = 'badge danger'
   }
 

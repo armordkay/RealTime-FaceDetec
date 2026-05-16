@@ -8,6 +8,8 @@ export const employeeApi = {
     apiRequest(`/employees/${employeeId}`, { method: 'PATCH', body: payload }),
   deactivate: (employeeId) =>
     apiRequest(`/employees/${employeeId}`, { method: 'DELETE' }),
+  hardDelete: (employeeId) =>
+    apiRequest(`/employees/${employeeId}/hard-delete`, { method: 'DELETE' }),
   me: () => apiRequest('/employees/me'),
   updateMe: (payload) => apiRequest('/employees/me', { method: 'PATCH', body: payload }),
 }

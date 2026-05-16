@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { adminApi } from '../api/adminApi'
+import { attendanceApi } from '../api/attendanceApi'
 import StatusBadge from '../components/common/StatusBadge'
 import { formatDateTime } from '../utils/time'
 
@@ -15,10 +16,14 @@ const initialUserForm = {
 export default function AdminPage() {
   const [overview, setOverview] = useState(null)
   const [logs, setLogs] = useState([])
+  const [alerts, setAlerts] = useState([])
   const [users, setUsers] = useState([])
   const [config, setConfig] = useState({
     recognition_threshold: 0.65,
     kiosk_allowed_devices: '',
+    anomaly_safe_score_threshold: 0.8,
+    anomaly_short_session_minutes: 15,
+    anomaly_near_event_minutes: 5,
   })
   const [userForm, setUserForm] = useState(initialUserForm)
   const [error, setError] = useState('')
@@ -35,8 +40,10 @@ export default function AdminPage() {
         adminApi.users(),
         adminApi.config(),
       ])
+      const alertsRes = await attendanceApi.anomalies({ today_only: true, status: 'open', limit: 20 })
       setOverview(overviewRes.data)
       setLogs(logsRes.data)
+      setAlerts(alertsRes.data)
       setUsers(usersRes.data)
       setConfig(configRes.data)
     } catch (err) {
@@ -108,11 +115,29 @@ export default function AdminPage() {
       const response = await adminApi.updateConfig({
         recognition_threshold: Number(config.recognition_threshold),
         kiosk_allowed_devices: config.kiosk_allowed_devices || '',
+        anomaly_safe_score_threshold: Number(config.anomaly_safe_score_threshold),
+        anomaly_short_session_minutes: Number(config.anomaly_short_session_minutes),
+        anomaly_near_event_minutes: Number(config.anomaly_near_event_minutes),
       })
       setConfig(response.data)
       setMessage('System config saved')
     } catch (err) {
       setError(err.message || 'Cannot save system config')
+    }
+  }
+
+  async function reviewAlert(item) {
+    const note = window.prompt('Review note')
+    if (!note?.trim()) return
+
+    setError('')
+    setMessage('')
+    try {
+      await attendanceApi.reviewAnomaly(item.id, note.trim())
+      setMessage('Alert reviewed')
+      await loadAdminData()
+    } catch (err) {
+      setError(err.message || 'Cannot review alert')
     }
   }
 
@@ -129,7 +154,7 @@ export default function AdminPage() {
       </div>
 
       {error && <p className="error-text">{error}</p>}
-      {message && <p>{message}</p>}
+      {message && <p className="success-text">{message}</p>}
 
       {overview && (
         <div className="grid stats-grid">
@@ -153,8 +178,52 @@ export default function AdminPage() {
             <p>{overview.devices_seen}</p>
             <small>Seen in logs</small>
           </div>
+          <div className="card stat-card">
+            <h3>Alerts Today</h3>
+            <p>{overview.open_anomalies_today}</p>
+            <small>Open anomaly flags</small>
+          </div>
         </div>
       )}
+
+      <div className="card">
+        <h3>Today's Alerts</h3>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Employee</th>
+              <th>Severity</th>
+              <th>Rule</th>
+              <th>Details</th>
+              <th>Score</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {alerts.map((item) => (
+              <tr key={item.id}>
+                <td>{formatDateTime(item.event_time || item.created_at)}</td>
+                <td>{item.employee_name}</td>
+                <td><StatusBadge value={item.severity} /></td>
+                <td>{item.title}</td>
+                <td>{item.description}</td>
+                <td>{item.score ?? '-'}</td>
+                <td>
+                  <button className="btn-link" type="button" onClick={() => reviewAlert(item)}>
+                    Review
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {alerts.length === 0 && (
+              <tr>
+                <td colSpan="7">No open alerts today.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
 
       <div className="card">
         <h3>Employee Access Logs</h3>
@@ -211,6 +280,37 @@ export default function AdminPage() {
               value={config.kiosk_allowed_devices}
               onChange={(event) => updateConfigField('kiosk_allowed_devices', event.target.value)}
               placeholder="kiosk_front_gate_1,camera_front_door_1"
+            />
+          </label>
+          <label>
+            Safe Score Threshold
+            <input
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              value={config.anomaly_safe_score_threshold}
+              onChange={(event) => updateConfigField('anomaly_safe_score_threshold', event.target.value)}
+            />
+          </label>
+          <label>
+            Short Session Minutes
+            <input
+              type="number"
+              min="1"
+              max="240"
+              value={config.anomaly_short_session_minutes}
+              onChange={(event) => updateConfigField('anomaly_short_session_minutes', event.target.value)}
+            />
+          </label>
+          <label>
+            Near Event Window Minutes
+            <input
+              type="number"
+              min="1"
+              max="60"
+              value={config.anomaly_near_event_minutes}
+              onChange={(event) => updateConfigField('anomaly_near_event_minutes', event.target.value)}
             />
           </label>
         </div>

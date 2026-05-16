@@ -72,7 +72,7 @@ export default function EmployeesPage() {
       <p>Create employee first, then open detail page to capture face images from camera.</p>
 
       {error && <p className="error-text">{error}</p>}
-      {message && <p>{message}</p>}
+      {message && <p className="success-text">{message}</p>}
 
       <form className="card" onSubmit={handleCreate}>
         <h3>Create New Employee</h3>

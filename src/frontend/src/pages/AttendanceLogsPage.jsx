@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { attendanceApi } from '../api/attendanceApi'
 import StatusBadge from '../components/common/StatusBadge'
@@ -6,6 +6,9 @@ import { formatDateTime } from '../utils/time'
 
 export default function AttendanceLogsPage() {
   const [logs, setLogs] = useState([])
+  const [alerts, setAlerts] = useState([])
+  const [auditLogs, setAuditLogs] = useState([])
+  const [auditLogId, setAuditLogId] = useState(null)
   const [status, setStatus] = useState('')
   const [actionType, setActionType] = useState('')
   const [editingLogId, setEditingLogId] = useState(null)
@@ -19,12 +22,22 @@ export default function AttendanceLogsPage() {
     setError('')
     setMessage('')
     try {
-      const response = await attendanceApi.listLogs({ status, action_type: actionType })
-      setLogs(response.data)
+      const [logsResponse, alertsResponse] = await Promise.all([
+        attendanceApi.listLogs({ status, action_type: actionType }),
+        attendanceApi.anomalies({ today_only: true, status: 'open', limit: 20 }),
+      ])
+      setLogs(logsResponse.data)
+      setAlerts(alertsResponse.data)
     } catch (err) {
       setError(err.message || 'Cannot load attendance logs')
     }
   }
+
+  useEffect(() => {
+    fetchLogs()
+    // Initial load only; filters are applied when the user clicks Load Logs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   function openEdit(item) {
     setEditingLogId(item.id)
@@ -37,6 +50,10 @@ export default function AttendanceLogsPage() {
 
   async function saveEdit() {
     if (!editingLogId) return
+    if (!editReason.trim()) {
+      setError('Reason is required when editing attendance logs')
+      return
+    }
     setError('')
     setMessage('')
     try {
@@ -57,10 +74,37 @@ export default function AttendanceLogsPage() {
     }
   }
 
+  async function loadAudit(item) {
+    setError('')
+    setMessage('')
+    try {
+      const response = await attendanceApi.auditLogs(item.id)
+      setAuditLogId(item.id)
+      setAuditLogs(response.data)
+    } catch (err) {
+      setError(err.message || 'Cannot load audit trail')
+    }
+  }
+
+  async function reviewAlert(item) {
+    const note = window.prompt('Review note')
+    if (!note?.trim()) return
+
+    setError('')
+    setMessage('')
+    try {
+      await attendanceApi.reviewAnomaly(item.id, note.trim())
+      setMessage('Alert reviewed')
+      await fetchLogs()
+    } catch (err) {
+      setError(err.message || 'Cannot review alert')
+    }
+  }
+
   return (
     <section className="page">
       <h1>Attendance Logs</h1>
-      <p>Manager mode: full logs with edit permission.</p>
+      <p>Manager mode: full logs with edit permission and audit trail.</p>
 
       <div className="inline-form">
         <select value={status} onChange={(event) => setStatus(event.target.value)}>
@@ -68,6 +112,7 @@ export default function AttendanceLogsPage() {
           <option value="recorded">recorded</option>
           <option value="duplicate_blocked">duplicate_blocked</option>
           <option value="review_required">review_required</option>
+          <option value="suspicious">suspicious</option>
           <option value="rejected">rejected</option>
         </select>
 
@@ -84,7 +129,44 @@ export default function AttendanceLogsPage() {
       </div>
 
       {error && <p className="error-text">{error}</p>}
-      {message && <p>{message}</p>}
+      {message && <p className="success-text">{message}</p>}
+
+      <div className="card">
+        <h3>Today's Alerts</h3>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Employee</th>
+              <th>Severity</th>
+              <th>Rule</th>
+              <th>Details</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {alerts.map((item) => (
+              <tr key={item.id}>
+                <td>{formatDateTime(item.event_time || item.created_at)}</td>
+                <td>{item.employee_name}</td>
+                <td><StatusBadge value={item.severity} /></td>
+                <td>{item.title}</td>
+                <td>{item.description}</td>
+                <td>
+                  <button className="btn-link" type="button" onClick={() => reviewAlert(item)}>
+                    Review
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {alerts.length === 0 && (
+              <tr>
+                <td colSpan="6">No open alerts today.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {editingLogId && (
         <div className="card">
@@ -101,13 +183,15 @@ export default function AttendanceLogsPage() {
               <option value="recorded">recorded</option>
               <option value="duplicate_blocked">duplicate_blocked</option>
               <option value="review_required">review_required</option>
+              <option value="suspicious">suspicious</option>
               <option value="rejected">rejected</option>
             </select>
 
             <input
-              placeholder="Reason"
+              placeholder="Reason required"
               value={editReason}
               onChange={(event) => setEditReason(event.target.value)}
+              required
             />
 
             <button className="btn" type="button" onClick={saveEdit}>
@@ -131,6 +215,7 @@ export default function AttendanceLogsPage() {
               <th>Status</th>
               <th>Score</th>
               <th>Action</th>
+              <th>Audit</th>
             </tr>
           </thead>
           <tbody>
@@ -151,16 +236,50 @@ export default function AttendanceLogsPage() {
                     Edit
                   </button>
                 </td>
+                <td>
+                  <button className="btn-link" onClick={() => loadAudit(item)}>
+                    View
+                  </button>
+                </td>
               </tr>
             ))}
             {logs.length === 0 && (
               <tr>
-                <td colSpan="7">No logs loaded.</td>
+                <td colSpan="8">No logs loaded.</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+
+      {auditLogId && (
+        <div className="card">
+          <h3>Audit Trail #{auditLogId}</h3>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Actor</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditLogs.map((item) => (
+                <tr key={item.id}>
+                  <td>{formatDateTime(item.created_at)}</td>
+                  <td>{item.actor_username}</td>
+                  <td>{item.reason}</td>
+                </tr>
+              ))}
+              {auditLogs.length === 0 && (
+                <tr>
+                  <td colSpan="3">No audit records for this log.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   )
 }

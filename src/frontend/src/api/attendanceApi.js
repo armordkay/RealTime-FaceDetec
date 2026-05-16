@@ -18,6 +18,13 @@ export const attendanceApi = {
   myStatus: () => apiRequest('/attendance/my-status'),
   updateLog: (logId, payload) =>
     apiRequest(`/attendance/logs/${logId}`, { method: 'PATCH', body: payload }),
+  auditLogs: (logId) => apiRequest(`/attendance/logs/${logId}/audit`),
+  anomalies: (params = {}) => apiRequest(`/attendance/anomalies${toQuery(params)}`),
+  reviewAnomaly: (flagId, resolutionNote) =>
+    apiRequest(`/attendance/anomalies/${flagId}/review`, {
+      method: 'PATCH',
+      body: { resolution_note: resolutionNote },
+    }),
   kioskCheckin: (deviceId, croppedImageBase64) =>
     apiRequest('/attendance/kiosk-checkin', {
       method: 'POST',

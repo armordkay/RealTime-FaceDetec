@@ -184,6 +184,24 @@ export default function EmployeeDetailPage({ employeeId }) {
     }
   }
 
+  async function handleHardDelete() {
+    if (!employee) return
+    const confirmed = window.confirm(
+      `Permanently delete ${employee.full_name}? This only works when the employee has no related logs, face samples, users, leave, or email records.`,
+    )
+    if (!confirmed) return
+
+    setError('')
+    setMessage('')
+    try {
+      await employeeApi.hardDelete(employee.id)
+      setMessage('Employee permanently deleted')
+      navigate('/employees')
+    } catch (err) {
+      setError(err.message || 'Cannot permanently delete employee')
+    }
+  }
+
   return (
     <section className="page">
       <button type="button" className="btn secondary" onClick={() => navigate('/employees')}>
@@ -192,7 +210,7 @@ export default function EmployeeDetailPage({ employeeId }) {
       <h1>Employee Detail</h1>
 
       {error && <p className="error-text">{error}</p>}
-      {message && <p>{message}</p>}
+      {message && <p className="success-text">{message}</p>}
       {!employee && !error && <p>Loading...</p>}
 
       {employee && (
@@ -263,6 +281,9 @@ export default function EmployeeDetailPage({ employeeId }) {
                   Deactivate Employee
                 </button>
               )}
+              <button type="button" className="btn danger" onClick={handleHardDelete}>
+                Delete Permanently
+              </button>
             </div>
           </form>
 
