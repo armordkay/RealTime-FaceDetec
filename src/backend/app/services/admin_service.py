@@ -11,6 +11,7 @@ from app.repositories.attendance_repository import AttendanceRepository
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.system_config_repository import SystemConfigRepository
 from app.repositories.user_repository import UserRepository
+from app.services.anomaly_service import AnomalyService
 
 
 ALLOWED_ROLES = {ROLE_ADMIN, ROLE_MANAGER, ROLE_VIEWER}
@@ -23,6 +24,7 @@ class AdminService:
         self.employee_repository = EmployeeRepository()
         self.attendance_repository = AttendanceRepository()
         self.config_repository = SystemConfigRepository()
+        self.anomaly_service = AnomalyService()
 
     def overview(self) -> dict:
         employees = self.employee_repository.list()
@@ -40,6 +42,7 @@ class AdminService:
             "check_in_events": action_counts.get("check_in", 0),
             "check_out_events": action_counts.get("check_out", 0),
             "devices_seen": len({item.device_id for item in logs}),
+            "open_anomalies_today": self.anomaly_service.open_today_count(),
         }
 
     def recent_access_logs(self, limit: int = 50) -> list[dict]:
@@ -133,6 +136,18 @@ class AdminService:
                 "kiosk_allowed_devices",
                 "kiosk_front_gate_1",
             ),
+            "anomaly_safe_score_threshold": self.config_repository.get_float(
+                "anomaly_safe_score_threshold",
+                self.settings.anomaly_safe_score_threshold,
+            ),
+            "anomaly_short_session_minutes": self.config_repository.get_int(
+                "anomaly_short_session_minutes",
+                self.settings.anomaly_short_session_minutes,
+            ),
+            "anomaly_near_event_minutes": self.config_repository.get_int(
+                "anomaly_near_event_minutes",
+                self.settings.anomaly_near_event_minutes,
+            ),
         }
 
     def update_config(self, payload: dict) -> dict:
@@ -145,6 +160,21 @@ class AdminService:
             "kiosk_allowed_devices",
             payload.get("kiosk_allowed_devices", ""),
             "Comma-separated device ids allowed for kiosk use",
+        )
+        self.config_repository.upsert(
+            "anomaly_safe_score_threshold",
+            str(payload["anomaly_safe_score_threshold"]),
+            "Score below this value is marked suspicious even if it passes recognition threshold",
+        )
+        self.config_repository.upsert(
+            "anomaly_short_session_minutes",
+            str(payload["anomaly_short_session_minutes"]),
+            "Minimum expected minutes between check-in and check-out",
+        )
+        self.config_repository.upsert(
+            "anomaly_near_event_minutes",
+            str(payload["anomaly_near_event_minutes"]),
+            "Time window for near-simultaneous kiosk anomaly rules",
         )
         return self.get_config()
 

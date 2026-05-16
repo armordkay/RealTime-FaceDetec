@@ -18,3 +18,6 @@ class AdminUserUpdateRequest(BaseModel):
 class SystemConfigUpdateRequest(BaseModel):
     recognition_threshold: float = Field(ge=0.0, le=1.0)
     kiosk_allowed_devices: str = Field(default="", max_length=1000)
+    anomaly_safe_score_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    anomaly_short_session_minutes: int = Field(default=15, ge=1, le=240)
+    anomaly_near_event_minutes: int = Field(default=5, ge=1, le=60)

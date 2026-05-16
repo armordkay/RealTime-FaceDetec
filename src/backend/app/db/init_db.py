@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 
 from app.db.supabase_client import supabase_enabled
 from app.core.security import hash_password
@@ -13,6 +13,9 @@ from app.models.entities import AttendanceLog, Employee, Shift, SystemConfig, Us
 DEFAULT_CONFIGS = {
     "recognition_threshold": ("0.65", "Minimum score required to accept a face match"),
     "kiosk_allowed_devices": ("kiosk_front_gate_1,camera_front_door_1", "Comma-separated device ids allowed for kiosk use"),
+    "anomaly_safe_score_threshold": ("0.80", "Score below this value is marked suspicious"),
+    "anomaly_short_session_minutes": ("15", "Minimum expected minutes between check-in and check-out"),
+    "anomaly_near_event_minutes": ("5", "Near-simultaneous event window in minutes"),
 }
 
 
@@ -22,7 +25,19 @@ def init_db() -> None:
         return
 
     Base.metadata.create_all(bind=engine)
+    migrate_existing_schema()
     seed_db()
+
+
+def migrate_existing_schema() -> None:
+    inspector = inspect(engine)
+    table_names = inspector.get_table_names()
+
+    if "face_samples" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("face_samples")}
+        if "embedding" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE face_samples ADD COLUMN embedding TEXT"))
 
 
 def seed_supabase_db() -> None:

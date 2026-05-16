@@ -4,16 +4,22 @@ from app.api.v1.dependencies import require_roles
 from app.core.config import get_settings
 from app.core.permissions import ROLE_ADMIN, ROLE_MANAGER
 from app.schemas.attendance import (
+    AnomalyReviewRequest,
     AttendanceConfirmRequest,
     AttendanceLogUpdateRequest,
     AttendanceRecognizeRequest,
+    LeaveCalendarCreateRequest,
 )
 from app.schemas.common import build_success
+from app.services.anomaly_service import AnomalyService
 from app.services.attendance_service import AttendanceService
+from app.services.leave_calendar_service import LeaveCalendarService
 
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 service = AttendanceService()
+anomaly_service = AnomalyService()
+leave_service = LeaveCalendarService()
 settings = get_settings()
 
 
@@ -158,7 +164,63 @@ def my_status(current_user: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGE
 def update_attendance_log(
     log_id: int,
     payload: AttendanceLogUpdateRequest,
+    current_user: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER)),
+):
+    data = service.update_log(
+        log_id=log_id,
+        payload=payload.model_dump(exclude_unset=True),
+        actor_user=current_user,
+    )
+    return build_success(data)
+
+
+@router.get("/logs/{log_id}/audit")
+def attendance_log_audit(
+    log_id: int,
     _: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER)),
 ):
-    data = service.update_log(log_id=log_id, payload=payload.model_dump(exclude_unset=True))
+    data = service.list_audit_logs(log_id)
+    return build_success(data)
+
+
+@router.get("/anomalies")
+def list_anomalies(
+    status: str | None = "open",
+    today_only: bool = True,
+    limit: int = 100,
+    _: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER)),
+):
+    data = anomaly_service.list_flags(status=status, today_only=today_only, limit=limit)
+    return build_success(data)
+
+
+@router.patch("/anomalies/{flag_id}/review")
+def review_anomaly(
+    flag_id: int,
+    payload: AnomalyReviewRequest,
+    current_user: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER)),
+):
+    data = anomaly_service.mark_reviewed(
+        flag_id=flag_id,
+        reviewer_user_id=current_user["id"],
+        note=payload.resolution_note,
+    )
+    return build_success(data)
+
+
+@router.get("/leave-calendar")
+def list_leave_calendar(
+    leave_date: str,
+    _: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER)),
+):
+    data = leave_service.list_by_date(leave_date)
+    return build_success(data)
+
+
+@router.post("/leave-calendar")
+def create_leave_calendar(
+    payload: LeaveCalendarCreateRequest,
+    current_user: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER)),
+):
+    data = leave_service.create(payload.model_dump(), current_user)
     return build_success(data)

@@ -74,3 +74,9 @@ def update_employee(
 def deactivate_employee(employee_id: int, _: dict = Depends(require_roles(ROLE_ADMIN, ROLE_MANAGER))):
     data = service.deactivate(employee_id)
     return build_success(data)
+
+
+@router.delete("/{employee_id}/hard-delete")
+def hard_delete_employee(employee_id: int, _: dict = Depends(require_roles(ROLE_ADMIN))):
+    data = service.hard_delete(employee_id)
+    return build_success(data)

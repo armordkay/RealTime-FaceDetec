@@ -1,10 +1,15 @@
+import json
 from datetime import datetime, timedelta
 
+from fastapi import HTTPException, status
+
 from app.core.timezone import VIETNAM_TZ, as_utc, as_vietnam_time, to_vietnam_iso, vietnam_today
-from app.models.entities import AttendanceLog, utc_now
+from app.models.entities import AttendanceAuditLog, AttendanceLog, utc_now
+from app.repositories.audit_repository import AttendanceAuditRepository
 from app.repositories.attendance_repository import AttendanceRepository
 from app.repositories.employee_repository import EmployeeRepository
 from app.repositories.system_config_repository import SystemConfigRepository
+from app.services.anomaly_service import AnomalyService
 from app.services.recognition_service import RecognitionService
 from app.services.storage_service import ImageStorageService
 
@@ -16,6 +21,8 @@ class AttendanceService:
         self.config_repository = SystemConfigRepository()
         self.recognition_service = RecognitionService()
         self.storage_service = ImageStorageService()
+        self.anomaly_service = AnomalyService()
+        self.audit_repository = AttendanceAuditRepository()
 
     def recognize_and_attend(self, device_id: str, cropped_image_base64: str) -> dict:
         preview = self.recognize_for_attendance(device_id, cropped_image_base64)
@@ -148,9 +155,14 @@ class AttendanceService:
             reason=None,
             created_at=now,
         )
-        self.attendance_repository.create(log)
+        created_log = self.attendance_repository.create(log)
+        flags = self.anomaly_service.evaluate_attendance_log(created_log)
+        final_status = "suspicious" if flags else created_log.status
 
-        message = "Check-in thanh cong" if action == "check_in" else "Check-out thanh cong"
+        if flags:
+            message = "Attendance recorded but marked suspicious"
+        else:
+            message = "Check-in thanh cong" if action == "check_in" else "Check-out thanh cong"
         return {
             "match_found": True,
             "employee_id": employee_id,
@@ -159,9 +171,10 @@ class AttendanceService:
             "threshold": threshold,
             "is_live": is_live,
             "action_suggested": action,
-            "attendance_status": "recorded",
+            "attendance_status": final_status,
             "message": message,
             "snapshot_url": snapshot_url,
+            "anomaly_flags": [flag.rule_key for flag in flags],
         }
 
     def list_logs(
@@ -228,7 +241,7 @@ class AttendanceService:
             "next_expected_action": self._suggest_action(employee_id),
         }
 
-    def update_log(self, log_id: int, payload: dict) -> dict:
+    def update_log(self, log_id: int, payload: dict, actor_user: dict) -> dict:
         log = self.attendance_repository.get(log_id)
         if log is None:
             return {
@@ -237,17 +250,74 @@ class AttendanceService:
             }
 
         allowed_fields = {"action_type", "status", "reason"}
+        changed_payload = {
+            key: value
+            for key, value in payload.items()
+            if key in allowed_fields and value is not None and getattr(log, key) != value
+        }
+        if not changed_payload:
+            employee = self.employee_repository.get(log.employee_id)
+            return {
+                "updated": False,
+                "message": "No changes to update",
+                "log": self._to_log_item(log, employee),
+            }
+
+        reason = str(payload.get("reason") or "").strip()
+        if not reason:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reason is required when editing attendance logs",
+            )
+
+        before_value = {
+            key: getattr(log, key)
+            for key in changed_payload
+        }
         for key, value in payload.items():
             if key in allowed_fields and value is not None:
                 setattr(log, key, value)
 
-        self.attendance_repository.update(log)
-        employee = self.employee_repository.get(log.employee_id)
+        updated_log = self.attendance_repository.update(log)
+        after_value = {
+            key: getattr(updated_log, key)
+            for key in changed_payload
+        }
+        self.audit_repository.create(
+            AttendanceAuditLog(
+                attendance_log_id=updated_log.id,
+                actor_user_id=actor_user.get("id"),
+                actor_username=actor_user.get("username", "unknown"),
+                action="update_attendance_log",
+                before_value=json.dumps(before_value),
+                after_value=json.dumps(after_value),
+                reason=reason,
+                created_at=utc_now(),
+            )
+        )
+        employee = self.employee_repository.get(updated_log.employee_id)
         return {
             "updated": True,
             "message": "Attendance log updated",
-            "log": self._to_log_item(log, employee),
+            "log": self._to_log_item(updated_log, employee),
         }
+
+    def list_audit_logs(self, log_id: int) -> list[dict]:
+        items = self.audit_repository.list_by_log(log_id)
+        return [
+            {
+                "id": item.id,
+                "attendance_log_id": item.attendance_log_id,
+                "actor_user_id": item.actor_user_id,
+                "actor_username": item.actor_username,
+                "action": item.action,
+                "before_value": json.loads(item.before_value),
+                "after_value": json.loads(item.after_value),
+                "reason": item.reason,
+                "created_at": to_vietnam_iso(item.created_at),
+            }
+            for item in items
+        ]
 
     def _suggest_action(self, employee_id: int) -> str:
         start_of_day, end_of_day = self._today_bounds()

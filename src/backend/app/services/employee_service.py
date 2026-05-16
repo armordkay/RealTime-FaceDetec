@@ -89,6 +89,30 @@ class EmployeeService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
         return self._to_item(employee)
 
+    def hard_delete(self, employee_id: int) -> dict:
+        employee = self.employee_repository.get(employee_id)
+        if employee is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+
+        dependency_counts = self.employee_repository.dependency_counts(employee_id)
+        blockers = {key: value for key, value in dependency_counts.items() if value > 0}
+        if blockers:
+            details = ", ".join(f"{key}={value}" for key, value in blockers.items())
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot hard delete employee with related records: {details}. Deactivate instead.",
+            )
+
+        deleted = self.employee_repository.hard_delete(employee_id)
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+
+        return {
+            "deleted": True,
+            "employee_id": employee_id,
+            "message": "Employee permanently deleted",
+        }
+
     def get_my_profile(self, current_user: dict) -> dict:
         employee_id = current_user.get("employee_id")
         if employee_id is None:

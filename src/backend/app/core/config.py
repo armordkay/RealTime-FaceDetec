@@ -1,11 +1,13 @@
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 def _parse_bool(value: str | None, default: bool) -> bool:
@@ -59,6 +61,9 @@ class Settings:
     access_token_expire_minutes: int
 
     recognition_threshold: float
+    anomaly_safe_score_threshold: float
+    anomaly_short_session_minutes: int
+    anomaly_near_event_minutes: int
     kiosk_api_key: str | None
 
     media_dir: str
@@ -70,6 +75,19 @@ class Settings:
     minio_bucket: str
     minio_secure: bool
     minio_public_url: str | None
+
+    alert_email_enabled: bool
+    alert_smtp_host: str | None
+    alert_smtp_port: int
+    alert_smtp_username: str | None
+    alert_smtp_password: str | None
+    alert_smtp_from: str | None
+    alert_email_recipients: list[str]
+    alert_smtp_use_tls: bool
+
+    attendance_email_enabled: bool
+    attendance_email_after_shift_minutes: int
+    attendance_email_scan_interval_seconds: int
 
 
 @lru_cache
@@ -94,6 +112,9 @@ def get_settings() -> Settings:
             os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"), 60
         ),
         recognition_threshold=_parse_float(os.getenv("RECOGNITION_THRESHOLD"), 0.65),
+        anomaly_safe_score_threshold=_parse_float(os.getenv("ANOMALY_SAFE_SCORE_THRESHOLD"), 0.8),
+        anomaly_short_session_minutes=_parse_int(os.getenv("ANOMALY_SHORT_SESSION_MINUTES"), 15),
+        anomaly_near_event_minutes=_parse_int(os.getenv("ANOMALY_NEAR_EVENT_MINUTES"), 5),
         kiosk_api_key=os.getenv("KIOSK_API_KEY"),
         media_dir=os.getenv("MEDIA_DIR", "media"),
         public_media_url=os.getenv("PUBLIC_MEDIA_URL", "/media"),
@@ -103,4 +124,22 @@ def get_settings() -> Settings:
         minio_bucket=os.getenv("MINIO_BUCKET", "face-attendance"),
         minio_secure=_parse_bool(os.getenv("MINIO_SECURE"), False),
         minio_public_url=os.getenv("MINIO_PUBLIC_URL"),
+        alert_email_enabled=_parse_bool(os.getenv("ALERT_EMAIL_ENABLED"), False),
+        alert_smtp_host=os.getenv("ALERT_SMTP_HOST"),
+        alert_smtp_port=_parse_int(os.getenv("ALERT_SMTP_PORT"), 587),
+        alert_smtp_username=os.getenv("ALERT_SMTP_USERNAME"),
+        alert_smtp_password=os.getenv("ALERT_SMTP_PASSWORD"),
+        alert_smtp_from=os.getenv("ALERT_SMTP_FROM"),
+        alert_email_recipients=_parse_list(os.getenv("ALERT_EMAIL_RECIPIENTS"), []),
+        alert_smtp_use_tls=_parse_bool(os.getenv("ALERT_SMTP_USE_TLS"), True),
+        attendance_email_enabled=_parse_bool(os.getenv("ATTENDANCE_EMAIL_ENABLED"), False),
+        attendance_email_after_shift_minutes=_parse_int(
+            os.getenv("ATTENDANCE_EMAIL_AFTER_SHIFT_MINUTES")
+            or os.getenv("ATTENDANCE_EMAIL_DELAY_MINUTES"),
+            30,
+        ),
+        attendance_email_scan_interval_seconds=_parse_int(
+            os.getenv("ATTENDANCE_EMAIL_SCAN_INTERVAL_SECONDS"),
+            60,
+        ),
     )

@@ -4,7 +4,19 @@ from typing import Any, TypeVar
 import requests
 
 from app.core.config import get_settings
-from app.models.entities import AttendanceLog, Employee, FaceSample, Shift, SystemConfig, User
+from app.models.entities import (
+    AnomalyFlag,
+    AttendanceAuditLog,
+    AttendanceEmailNotification,
+    AttendanceLog,
+    DailyAttendanceEmailNotification,
+    Employee,
+    FaceSample,
+    LeaveCalendar,
+    Shift,
+    SystemConfig,
+    User,
+)
 
 
 ModelT = TypeVar("ModelT")
@@ -15,6 +27,11 @@ TABLE_DATETIME_FIELDS = {
     "employees": {"created_at", "updated_at"},
     "face_samples": {"created_at"},
     "attendance_logs": {"event_time", "created_at"},
+    "anomaly_flags": {"created_at", "reviewed_at"},
+    "attendance_audit_logs": {"created_at"},
+    "attendance_email_notifications": {"created_at", "sent_at"},
+    "daily_attendance_email_notifications": {"created_at", "sent_at"},
+    "leave_calendar": {"created_at"},
     "system_configs": {"updated_at"},
 }
 
@@ -135,5 +152,10 @@ MODEL_TABLES = {
     Employee: "employees",
     FaceSample: "face_samples",
     AttendanceLog: "attendance_logs",
+    AnomalyFlag: "anomaly_flags",
+    AttendanceAuditLog: "attendance_audit_logs",
+    AttendanceEmailNotification: "attendance_email_notifications",
+    DailyAttendanceEmailNotification: "daily_attendance_email_notifications",
+    LeaveCalendar: "leave_calendar",
     SystemConfig: "system_configs",
 }

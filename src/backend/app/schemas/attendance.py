@@ -35,3 +35,14 @@ class AttendanceLogUpdateRequest(BaseModel):
     action_type: str | None = None
     status: str | None = None
     reason: str | None = None
+
+
+class AnomalyReviewRequest(BaseModel):
+    resolution_note: str = Field(min_length=1, max_length=1000)
+
+
+class LeaveCalendarCreateRequest(BaseModel):
+    employee_id: int | None = Field(default=None, ge=1)
+    leave_date: str = Field(min_length=10, max_length=10)
+    leave_type: str = Field(default="leave", min_length=2, max_length=80)
+    reason: str = Field(default="", max_length=1000)

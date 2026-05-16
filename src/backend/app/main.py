@@ -13,6 +13,7 @@ from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.db.init_db import init_db
 from app.schemas.common import build_error, build_success
+from app.services.attendance_email_worker import AttendanceEmailWorker
 
 
 settings = get_settings()
@@ -36,9 +37,17 @@ def create_app() -> FastAPI:
     )
 
     @app.on_event("startup")
-    def startup_event() -> None:
+    async def startup_event() -> None:
         init_db()
         Path(settings.media_dir).mkdir(parents=True, exist_ok=True)
+        app.state.attendance_email_worker = AttendanceEmailWorker()
+        app.state.attendance_email_worker.start()
+
+    @app.on_event("shutdown")
+    async def shutdown_event() -> None:
+        worker = getattr(app.state, "attendance_email_worker", None)
+        if worker is not None:
+            await worker.stop()
 
     app.mount(
         settings.public_media_url,

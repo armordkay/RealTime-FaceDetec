@@ -1,10 +1,20 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db.session import session_scope
 from app.db.supabase_client import get_supabase_client, model_to_payload, row_to_model, supabase_enabled
-from app.models.entities import Employee, utc_now
+from app.models.entities import (
+    AnomalyFlag,
+    AttendanceEmailNotification,
+    AttendanceLog,
+    DailyAttendanceEmailNotification,
+    Employee,
+    FaceSample,
+    LeaveCalendar,
+    User,
+    utc_now,
+)
 
 
 class EmployeeRepository:
@@ -115,3 +125,40 @@ class EmployeeRepository:
             return None
         employee.status = "inactive"
         return self.update(employee)
+
+    def dependency_counts(self, employee_id: int) -> dict[str, int]:
+        if supabase_enabled():
+            return {
+                "attendance_logs": len(get_supabase_client().select("attendance_logs", {"employee_id": f"eq.{employee_id}"})),
+                "face_samples": len(get_supabase_client().select("face_samples", {"employee_id": f"eq.{employee_id}"})),
+                "users": len(get_supabase_client().select("users", {"employee_id": f"eq.{employee_id}"})),
+                "anomaly_flags": len(get_supabase_client().select("anomaly_flags", {"employee_id": f"eq.{employee_id}"})),
+                "attendance_email_notifications": len(get_supabase_client().select("attendance_email_notifications", {"employee_id": f"eq.{employee_id}"})),
+                "daily_attendance_email_notifications": len(get_supabase_client().select("daily_attendance_email_notifications", {"employee_id": f"eq.{employee_id}"})),
+                "leave_calendar": len(get_supabase_client().select("leave_calendar", {"employee_id": f"eq.{employee_id}"})),
+            }
+
+        with session_scope() as db:
+            def count(model) -> int:
+                return int(db.scalar(select(func.count()).select_from(model).where(model.employee_id == employee_id)) or 0)
+
+            return {
+                "attendance_logs": count(AttendanceLog),
+                "face_samples": count(FaceSample),
+                "users": count(User),
+                "anomaly_flags": count(AnomalyFlag),
+                "attendance_email_notifications": count(AttendanceEmailNotification),
+                "daily_attendance_email_notifications": count(DailyAttendanceEmailNotification),
+                "leave_calendar": count(LeaveCalendar),
+            }
+
+    def hard_delete(self, employee_id: int) -> bool:
+        if supabase_enabled():
+            return get_supabase_client().delete("employees", {"id": f"eq.{employee_id}"})
+
+        with session_scope() as db:
+            employee = db.get(Employee, employee_id)
+            if employee is None:
+                return False
+            db.delete(employee)
+            return True
