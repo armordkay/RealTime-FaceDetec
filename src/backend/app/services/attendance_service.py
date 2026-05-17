@@ -73,6 +73,18 @@ class AttendanceService:
                 "snapshot_url": None,
             }
 
+        liveness = self.recognition_service.detect_liveness(cropped_image_base64)
+        if self.recognition_service.is_spoof(liveness):
+            return {
+                **recognized,
+                "is_live": False,
+                "action_suggested": "ignored",
+                "attendance_status": "rejected",
+                "message": "Phat hien khuon mat gia (anh in / man hinh)",
+                "liveness_score": round(liveness.get("score", 0.0), 4),
+                "snapshot_url": None,
+            }
+
         action = self._suggest_action(employee_id)
         return {
             **recognized,
@@ -120,6 +132,9 @@ class AttendanceService:
                 "snapshot_url": None,
             }
 
+        liveness = self.recognition_service.detect_liveness(cropped_image_base64)
+        is_live_final = liveness["is_real"] if liveness.get("assessed") else is_live
+
         now = utc_now()
         action = self._suggest_action(employee_id)
         try:
@@ -142,6 +157,21 @@ class AttendanceService:
                 "snapshot_url": None,
             }
 
+        if self.recognition_service.is_spoof(liveness):
+            return {
+                "match_found": True,
+                "employee_id": employee_id,
+                "employee_name": employee.full_name,
+                "score": score,
+                "threshold": threshold,
+                "is_live": False,
+                "action_suggested": "ignored",
+                "attendance_status": "rejected",
+                "message": "Phat hien khuon mat gia (anh in / man hinh) - khong ghi cong",
+                "snapshot_url": snapshot_url,
+                "liveness_score": round(liveness.get("score", 0.0), 4),
+            }
+
         log = AttendanceLog(
             employee_id=employee_id,
             device_id=device_id,
@@ -149,7 +179,7 @@ class AttendanceService:
             event_time=now,
             score=score,
             threshold=threshold,
-            is_live=is_live,
+            is_live=is_live_final,
             snapshot_url=snapshot_url,
             status="recorded",
             reason=None,
@@ -169,11 +199,12 @@ class AttendanceService:
             "employee_name": employee.full_name,
             "score": score,
             "threshold": threshold,
-            "is_live": is_live,
+            "is_live": is_live_final,
             "action_suggested": action,
             "attendance_status": final_status,
             "message": message,
             "snapshot_url": snapshot_url,
+            "liveness_score": round(liveness.get("score", 0.0), 4),
             "anomaly_flags": [flag.rule_key for flag in flags],
         }
 

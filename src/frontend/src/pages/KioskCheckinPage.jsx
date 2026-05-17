@@ -34,6 +34,7 @@ export default function KioskCheckinPage() {
   const currentPersonFrameRef = useRef('')
   const lastResultFrameRef = useRef('')
   const lastResultRef = useRef(null)
+  const overlayRef = useRef(null)
 
   const [error, setError] = useState('')
   const [currentPerson, setCurrentPerson] = useState(null)
@@ -52,7 +53,7 @@ export default function KioskCheckinPage() {
     captureFrameBase64,
   } = useCameraCapture({
     maxWidth: FRAME_MAX_WIDTH,
-    quality: 0.55,
+    quality: 0.92,
     onError: setError,
   })
 
@@ -61,6 +62,67 @@ export default function KioskCheckinPage() {
     lastResultFrameRef.current = frame || ''
     setLastResultHasFrame(Boolean(frame))
     setLastResult(nextResult)
+  }
+
+  function clearOverlay() {
+    const overlay = overlayRef.current
+    if (!overlay) return
+    const ctx = overlay.getContext('2d')
+    ctx.clearRect(0, 0, overlay.width, overlay.height)
+  }
+
+  // Vẽ khung quanh khuôn mặt phát hiện được trong camera.
+  // Xanh = nhận diện hợp lệ; Đỏ = có mặt nhưng không khớp / không hợp lệ.
+  function drawFaceBox(result) {
+    const overlay = overlayRef.current
+    const video = videoRef.current
+    if (!overlay || !video) return
+
+    const dw = video.clientWidth
+    const dh = video.clientHeight
+    if (!dw || !dh) return
+    if (overlay.width !== dw) overlay.width = dw
+    if (overlay.height !== dh) overlay.height = dh
+
+    const ctx = overlay.getContext('2d')
+    ctx.clearRect(0, 0, dw, dh)
+
+    const fa = result?.facial_area
+    const iw = result?.image_width
+    const ih = result?.image_height
+    if (!fa || !iw || !ih || (fa.w <= 0 && fa.h <= 0)) return
+
+    // Map toạ độ mặt từ ảnh phân tích sang khung hiển thị (object-fit: cover).
+    const scale = Math.max(dw / iw, dh / ih)
+    const offsetX = (iw * scale - dw) / 2
+    const offsetY = (ih * scale - dh) / 2
+    const x = fa.x * scale - offsetX
+    const y = fa.y * scale - offsetY
+    const w = fa.w * scale
+    const h = fa.h * scale
+
+    const ok =
+      result.match_found &&
+      result.attendance_status !== 'rejected' &&
+      result.is_live !== false
+    const color = ok ? '#16a34a' : '#dc2626'
+
+    ctx.lineWidth = 3
+    ctx.strokeStyle = color
+    ctx.strokeRect(x, y, w, h)
+
+    const label = ok
+      ? result.employee_name || 'Nhan dien OK'
+      : result.is_live === false
+        ? 'Mat gia'
+        : 'Khong khop'
+    ctx.font = '16px sans-serif'
+    const tw = ctx.measureText(label).width + 12
+    const ty = y - 24 >= 0 ? y - 24 : y + h
+    ctx.fillStyle = color
+    ctx.fillRect(x, ty, tw, 22)
+    ctx.fillStyle = '#ffffff'
+    ctx.fillText(label, x + 6, ty + 16)
   }
 
   async function startCamera() {
@@ -76,6 +138,7 @@ export default function KioskCheckinPage() {
     runningRef.current = false
     stopStreaming()
     stopCameraCapture()
+    clearOverlay()
   }
 
   function connectWebSocket() {
@@ -97,10 +160,12 @@ export default function KioskCheckinPage() {
         const payload = JSON.parse(event.data)
         if (payload.success === false) {
           setError(payload.error?.message || 'Recognition failed')
+          clearOverlay()
           return
         }
 
         setCurrentPerson(payload.data)
+        drawFaceBox(payload.data)
         currentPersonFrameRef.current = lastSentFrameRef.current
         if (
           payload.data.match_found
@@ -251,6 +316,7 @@ export default function KioskCheckinPage() {
         <div className="card kiosk-video-card">
           <div className="kiosk-video-frame">
             <video ref={videoRef} className="kiosk-video" muted playsInline />
+            <canvas ref={overlayRef} className="kiosk-face-overlay" />
           </div>
           <canvas ref={canvasRef} className="hidden" />
           <p>{requesting ? `Streaming (${connectionStatus})` : connectionStatus}</p>

@@ -11,3 +11,7 @@ numpy
 Pillow
 deepface
 tf-keras
+# torch (CPU-only) bắt buộc cho module chống ảnh giả (anti-spoofing) của DeepFace.
+# Máy/Docker không GPU dùng đúng wheel CPU qua index dưới đây.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.12.0+cpu

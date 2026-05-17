@@ -56,10 +56,25 @@ def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     return float(np.dot(a, b) / (norm_a * norm_b))
 
 
-def _extract_embedding(image_np: np.ndarray) -> list[float] | None:
+def _normalize_facial_area(area: dict | None) -> dict | None:
+    """Chuẩn hoá facial_area của DeepFace về {x, y, w, h} (số nguyên)."""
+    if not area:
+        return None
+    try:
+        return {
+            "x": int(area.get("x", 0)),
+            "y": int(area.get("y", 0)),
+            "w": int(area.get("w", 0)),
+            "h": int(area.get("h", 0)),
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_embedding(image_np: np.ndarray) -> tuple[list[float] | None, dict | None]:
     """
-    Dùng DeepFace để trích xuất embedding từ numpy image.
-    Trả về None nếu không phát hiện khuôn mặt hoặc có lỗi.
+    Dùng DeepFace trích xuất embedding + vùng khuôn mặt (facial_area) từ numpy image.
+    Trả về (None, None) nếu không phát hiện khuôn mặt hoặc có lỗi.
     """
     from deepface import DeepFace
 
@@ -79,7 +94,8 @@ def _extract_embedding(image_np: np.ndarray) -> list[float] | None:
                 align=detector_backend != "skip",
             )
             if results:
-                return results[0]["embedding"]
+                first = results[0]
+                return first["embedding"], _normalize_facial_area(first.get("facial_area"))
         except Exception as exc:
             last_error = exc
             logger.debug(
@@ -90,7 +106,7 @@ def _extract_embedding(image_np: np.ndarray) -> list[float] | None:
 
     if last_error is not None:
         logger.info("DeepFace could not extract embedding: %s", last_error)
-    return None
+    return None, None
 
 
 class RecognitionService:
@@ -116,19 +132,30 @@ class RecognitionService:
             logger.warning("Image decode error: %s", exc)
             return self._no_match(threshold, "Invalid image data")
 
-        # --- 2. Trích xuất embedding từ frame ---
-        query_embedding = _extract_embedding(image_np)
+        image_height, image_width = (int(image_np.shape[0]), int(image_np.shape[1]))
+
+        # --- 2. Trích xuất embedding + vùng mặt từ frame ---
+        query_embedding, facial_area = _extract_embedding(image_np)
         if query_embedding is None:
-            return self._no_match(threshold, "No face detected in frame")
+            return self._no_match(
+                threshold, "No face detected in frame",
+                None, image_width, image_height,
+            )
 
         # --- 3. Load enrolled embeddings and related employees ---
         samples = self.face_repository.list_active_with_embeddings()
         if not samples:
-            return self._no_match(threshold, "No enrolled face samples")
+            return self._no_match(
+                threshold, "No enrolled face samples",
+                facial_area, image_width, image_height,
+            )
 
         employees = self.employee_repository.list_by_ids([sample.employee_id for sample in samples])
         if not employees:
-            return self._no_match(threshold, "No enrolled profiles")
+            return self._no_match(
+                threshold, "No enrolled profiles",
+                facial_area, image_width, image_height,
+            )
 
         employees_by_id = {employee.id: employee for employee in employees}
         best_employee = None
@@ -161,6 +188,9 @@ class RecognitionService:
                 "threshold": threshold,
                 "is_live": True,
                 "message": "No match found",
+                "facial_area": facial_area,
+                "image_width": image_width,
+                "image_height": image_height,
             }
 
         return {
@@ -171,7 +201,64 @@ class RecognitionService:
             "threshold": threshold,
             "is_live": True,
             "message": "Match found",
+            "facial_area": facial_area,
+            "image_width": image_width,
+            "image_height": image_height,
         }
+
+    def detect_liveness(self, image_base64: str) -> dict:
+        """
+        Phát hiện ảnh giả (chống chấm công bằng ảnh in / màn hình điện thoại)
+        dùng model anti-spoofing có sẵn trong DeepFace (Fasnet, chạy bằng torch).
+
+        Trả về:
+          assessed: đã đánh giá được hay chưa (False = fail-open, không chặn)
+          is_real:  True nếu là khuôn mặt thật
+          score:    độ tin cậy anti-spoof (0..1)
+        """
+        if not self.settings.liveness_enabled:
+            return {"assessed": False, "is_real": True, "score": 1.0}
+
+        try:
+            image_np = _decode_image_to_numpy(image_base64)
+        except Exception:
+            return {"assessed": False, "is_real": True, "score": 0.0}
+
+        try:
+            from deepface import DeepFace
+
+            faces = DeepFace.extract_faces(
+                img_path=image_np,
+                detector_backend="opencv",
+                enforce_detection=False,
+                align=False,
+                anti_spoofing=True,
+            )
+        except Exception as exc:
+            # Fail-open: lỗi model không nên chặn người thật lúc demo.
+            logger.warning("Liveness check failed, bỏ qua (fail-open): %s", exc)
+            return {"assessed": False, "is_real": True, "score": 0.0}
+
+        if not faces:
+            return {"assessed": False, "is_real": True, "score": 0.0}
+
+        face = faces[0]
+        is_real = bool(face.get("is_real", True))
+        score = float(face.get("antispoof_score", 0.0) or 0.0)
+        logger.warning(
+            "LIVENESS is_real=%s score=%.4f min_score=%.2f -> %s",
+            is_real, score, self.settings.liveness_min_score,
+            "REAL" if (is_real and score >= self.settings.liveness_min_score) else "SPOOF/BLOCK",
+        )
+        return {"assessed": True, "is_real": is_real, "score": score}
+
+    def is_spoof(self, liveness: dict) -> bool:
+        """Quyết định có chặn hay không dựa trên kết quả detect_liveness."""
+        if not liveness.get("assessed"):
+            return False
+        if not liveness.get("is_real", True):
+            return True
+        return liveness.get("score", 1.0) < self.settings.liveness_min_score
 
     def extract_embedding_from_base64(self, image_base64: str) -> list[float] | None:
         """
@@ -182,7 +269,8 @@ class RecognitionService:
             image_np = _decode_image_to_numpy(image_base64)
         except Exception:
             return None
-        return _extract_embedding(image_np)
+        embedding, _ = _extract_embedding(image_np)
+        return embedding
 
     def get_threshold(self) -> float:
         return self.config_repository.get_float(
@@ -191,7 +279,13 @@ class RecognitionService:
         )
 
     @staticmethod
-    def _no_match(threshold: float, message: str) -> dict:
+    def _no_match(
+        threshold: float,
+        message: str,
+        facial_area: dict | None = None,
+        image_width: int = 0,
+        image_height: int = 0,
+    ) -> dict:
         return {
             "match_found": False,
             "employee_id": None,
@@ -200,4 +294,7 @@ class RecognitionService:
             "threshold": threshold,
             "is_live": True,
             "message": message,
+            "facial_area": facial_area,
+            "image_width": image_width,
+            "image_height": image_height,
         }

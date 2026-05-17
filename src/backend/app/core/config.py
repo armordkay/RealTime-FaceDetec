@@ -61,6 +61,8 @@ class Settings:
     access_token_expire_minutes: int
 
     recognition_threshold: float
+    liveness_enabled: bool
+    liveness_min_score: float
     anomaly_safe_score_threshold: float
     anomaly_short_session_minutes: int
     anomaly_near_event_minutes: int
@@ -112,6 +114,8 @@ def get_settings() -> Settings:
             os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"), 60
         ),
         recognition_threshold=_parse_float(os.getenv("RECOGNITION_THRESHOLD"), 0.65),
+        liveness_enabled=_parse_bool(os.getenv("LIVENESS_ENABLED"), True),
+        liveness_min_score=_parse_float(os.getenv("LIVENESS_MIN_SCORE"), 0.5),
         anomaly_safe_score_threshold=_parse_float(os.getenv("ANOMALY_SAFE_SCORE_THRESHOLD"), 0.8),
         anomaly_short_session_minutes=_parse_int(os.getenv("ANOMALY_SHORT_SESSION_MINUTES"), 15),
         anomaly_near_event_minutes=_parse_int(os.getenv("ANOMALY_NEAR_EVENT_MINUTES"), 5),
