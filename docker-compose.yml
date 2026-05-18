@@ -1,0 +1,64 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: realtime-facedetec-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      DATA_BACKEND: ${DATA_BACKEND:-sqlite}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_KEY: ${SUPABASE_KEY:-}
+      APP_NAME: ${APP_NAME:-Face Attendance API}
+      APP_ENV: ${APP_ENV:-dev}
+      DEBUG: ${DEBUG:-true}
+      API_V1_PREFIX: ${API_V1_PREFIX:-/api/v1}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/face_attendance.db}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-this-before-deploy}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      RECOGNITION_THRESHOLD: ${RECOGNITION_THRESHOLD:-0.65}
+      ATTENDANCE_COOLDOWN_SECONDS: ${ATTENDANCE_COOLDOWN_SECONDS:-60}
+      KIOSK_API_KEY: ${KIOSK_API_KEY:-}
+      MEDIA_DIR: ${MEDIA_DIR:-/app/media}
+      PUBLIC_MEDIA_URL: ${PUBLIC_MEDIA_URL:-/media}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-}
+      MINIO_BUCKET: ${MINIO_BUCKET:-face-attendance}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-}
+    volumes:
+      - backend_data:/app/data
+      - backend_media:/app/media
+      - deepface_cache:/root/.deepface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
+        VITE_KIOSK_WS_URL: ${VITE_KIOSK_WS_URL:-}
+        VITE_KIOSK_API_KEY: ${VITE_KIOSK_API_KEY:-}
+    container_name: realtime-facedetec-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      backend:
+        condition: service_started
+
+volumes:
+  backend_data:
+  backend_media:
+  deepface_cache:

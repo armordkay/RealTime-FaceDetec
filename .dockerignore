@@ -1,0 +1,31 @@
+.git
+.gitignore
+
+# Python
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+
+# Environment and local data
+.env
+*.db
+media
+src/backend/media
+
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+src/frontend/node_modules
+src/frontend/dist
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode
+.idea
